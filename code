@@ -1,0 +1,146 @@
+// Final Elevator System in C++ without Observer Pattern
+// Focused on clean architecture using Strategy and State patterns
+
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <map>
+#include <memory>
+#include <limits>
+using namespace std;
+
+enum class Direction { UP, DOWN, IDLE };
+
+struct Request {
+    int floor;
+    Direction direction;
+    bool isInternal; // internal = inside elevator
+    Request(int f, Direction d, bool internal = false) : floor(f), direction(d), isInternal(internal) {}
+};
+
+class ElevatorState; // forward declaration
+
+class Elevator {
+    int id;
+    int currentFloor;
+    Direction direction;
+    unique_ptr<ElevatorState> state;
+    priority_queue<int, vector<int>, greater<int>> upQueue;
+    priority_queue<int> downQueue;
+    bool doorsOpen;
+
+public:
+    Elevator(int id_) : id(id_), currentFloor(0), direction(Direction::IDLE), doorsOpen(false) {}
+
+    int getId() const { return id; }
+    int getCurrentFloor() const { return currentFloor; }
+    Direction getDirection() const { return direction; }
+
+    void addRequest(const Request& req) {
+        if (req.floor == currentFloor) return; // already at floor
+        if (req.floor > currentFloor) upQueue.push(req.floor);
+        else downQueue.push(req.floor);
+        if (direction == Direction::IDLE) direction = (req.floor > currentFloor) ? Direction::UP : Direction::DOWN;
+    }
+
+    bool isIdle() const {
+        return direction == Direction::IDLE && upQueue.empty() && downQueue.empty();
+    }
+
+    void step() {
+        if (direction == Direction::UP && !upQueue.empty()) {
+            int next = upQueue.top();
+            if (currentFloor < next) currentFloor++;
+            if (currentFloor == next) {
+                upQueue.pop();
+                doorsOpen = true;
+                cout << "Elevator " << id << " stopping at floor " << currentFloor << endl;
+            }
+        } else if (direction == Direction::DOWN && !downQueue.empty()) {
+            int next = downQueue.top();
+            if (currentFloor > next) currentFloor--;
+            if (currentFloor == next) {
+                downQueue.pop();
+                doorsOpen = true;
+                cout << "Elevator " << id << " stopping at floor " << currentFloor << endl;
+            }
+        } else {
+            direction = Direction::IDLE;
+        }
+    }
+};
+
+// Strategy Pattern Interface for assignment logic
+class AssignmentStrategy {
+public:
+    virtual Elevator* assignElevator(const Request& req, vector<unique_ptr<Elevator>>& elevators) = 0;
+    virtual ~AssignmentStrategy() {}
+};
+
+class NearestElevatorStrategy : public AssignmentStrategy {
+public:
+    Elevator* assignElevator(const Request& req, vector<unique_ptr<Elevator>>& elevators) override {
+        Elevator* best = nullptr;
+        int minDistance = numeric_limits<int>::max();
+        for (auto& e : elevators) {
+            if (e->isIdle() || (e->getDirection() == req.direction)) {
+                int distance = abs(e->getCurrentFloor() - req.floor);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    best = e.get();
+                }
+            }
+        }
+        return best;
+    }
+};
+
+class ElevatorSystem {
+    vector<unique_ptr<Elevator>> elevators;
+    unique_ptr<AssignmentStrategy> strategy;
+    queue<Request> requestQueue;
+
+public:
+    ElevatorSystem(int numElevators) {
+        for (int i = 0; i < numElevators; ++i) elevators.emplace_back(make_unique<Elevator>(i));
+        strategy = make_unique<NearestElevatorStrategy>();
+    }
+
+    void externalRequest(int floor, Direction dir) {
+        requestQueue.emplace(floor, dir, false);
+    }
+
+    void internalRequest(int elevatorId, int floor) {
+        if (elevatorId < elevators.size()) {
+            elevators[elevatorId]->addRequest(Request(floor, Direction::IDLE, true));
+        }
+    }
+
+    void step() {
+        // Assign requests to elevators
+        int size = requestQueue.size();
+        while (size--) {
+            Request req = requestQueue.front(); requestQueue.pop();
+            Elevator* e = strategy->assignElevator(req, elevators);
+            if (e) e->addRequest(req);
+            else requestQueue.push(req); // requeue if no assignment possible
+        }
+
+        // Step all elevators
+        for (auto& e : elevators) e->step();
+    }
+};
+
+int main() {
+    ElevatorSystem system(3);
+    system.externalRequest(3, Direction::UP);
+    system.externalRequest(5, Direction::DOWN);
+    system.internalRequest(0, 2);
+
+    for (int t = 0; t < 10; ++t) {
+        cout << "Time step " << t << endl;
+        system.step();
+    }
+
+    return 0;
+}
